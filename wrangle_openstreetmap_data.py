@@ -9,14 +9,7 @@ def get_cursor(file_handler):
     return ET.iterparse(file_handler, events=('start','end'))
 
 
-def get_tags(filename):
-    with open(filename) as f:
-        cursor = get_cursor(f)
-        tags = [element.tag for event, element in cursor if event == 'start']
-    return tags
-
-
-def get_tags_and_levels(filename):
+def get_tags(filename, levels=False):
     with open(filename) as f:
         cursor = get_cursor(f)
         level = -1
@@ -24,15 +17,16 @@ def get_tags_and_levels(filename):
         for event, element in cursor:
             if event == 'start':
                 level += 1
-                tags.append((element.tag, level))
+                if levels:
+                    tags.append((element.tag, level))
+                else:
+                    tags.append(element.tag)
             elif event == 'end':
                 level -= 1
-            if level < 0:
-                break
     return tags
 
 
 FILENAME = 'toulouse_small.osm'
 
 Counter(get_tags(FILENAME))
-Counter(get_tags_and_levels(FILENAME))
+Counter(get_tags(FILENAME, levels=True))
