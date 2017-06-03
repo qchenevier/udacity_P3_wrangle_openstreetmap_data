@@ -92,9 +92,12 @@ def parse_data(filename, filter_list=['node', 'way', 'relation']):
             record = _append_data(record, child)
 
         if element.tag in data.keys():
+            if not isinstance(data[element.tag], list):
+                data[element.tag] = [data[element.tag]]
             data[element.tag].append(record)
         else:
-            data[element.tag] = [record]
+            data[element.tag] = record
+            # data[element.tag] = [record]
 
         return data
 
@@ -116,7 +119,8 @@ Counter(get_tags(FILENAME, with_parent=True))
 Counter(get_tags(FILENAME, with_xpath=True))
 Counter(get_tags(FILENAME, with_level=True, with_parent=True))
 
-osm = parse_data(FILENAME)
+filter_list = ['node', 'way', 'relation']
+osm = parse_data(FILENAME, filter_list=filter_list)
 osm['node'][0]
 osm['way'][0]
-osm['relation'][0]
+osm['relation'][1]
