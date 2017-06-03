@@ -1,12 +1,15 @@
+import re
+import arrow
 import xml.etree.cElementTree as ET
 
 from builtins import *  # python 2 compatibility
 from pprint import pprint
 from collections import Counter
+from datetime import datetime
 
 
-def get_cursor(file_handler):
-    return ET.iterparse(file_handler, events=('start', 'end'))
+def _get_cursor(file_handler, events=('start', 'end')):
+    return ET.iterparse(file_handler, events=events)
 
 
 def get_tags(filename, **kwargs):
@@ -37,7 +40,7 @@ def get_tags(filename, **kwargs):
         return tags
 
     with open(filename) as file_h:
-        cursor = get_cursor(file_h)
+        cursor = _get_cursor(file_h)
         level = -1
         tags = []
         tag_stack = []
@@ -49,6 +52,62 @@ def get_tags(filename, **kwargs):
     return tags
 
 
+def _convert_type(data):
+    try:
+        return int(data)
+    except Exception as e:
+        try:
+            return float(data)
+        except Exception as e:
+            try:
+                return arrow.get(data).date()
+            except Exception as e:
+                if re.findall('[Tt]rue', data):
+                    return True
+                elif re.findall('[Ff]alse', data):
+                    return False
+                elif data == '':
+                    return None
+                else:
+                    return data
+
+
+def _convert_values_type(data_dict):
+    return {key: _convert_type(value) for key, value in data_dict.items()}
+
+
+def parse_data(filename, filter_list=['node', 'way', 'relation']):
+    def _append_data(data, element):
+        record = _convert_values_type(element.attrib)
+
+        if element.tag == 'nd':
+            record = record['ref']
+            element.tag = 'node_ref'
+
+        if element.tag == 'tag':
+            element.tag = record['k']
+            record = record['v']
+
+        for child in element.getchildren():
+            record = _append_data(record, child)
+
+        if element.tag in data.keys():
+            data[element.tag].append(record)
+        else:
+            data[element.tag] = [record]
+
+        return data
+
+    with open(filename) as file_h:
+        cursor = _get_cursor(file_h, events=('start',))
+        data = {}
+        for event, element in cursor:
+            if element.tag in filter_list:
+                data = _append_data(data, element)
+
+    return data
+
+
 FILENAME = 'toulouse_extra_small.osm'
 
 Counter(get_tags(FILENAME))
@@ -56,3 +115,8 @@ Counter(get_tags(FILENAME, with_level=True))
 Counter(get_tags(FILENAME, with_parent=True))
 Counter(get_tags(FILENAME, with_xpath=True))
 Counter(get_tags(FILENAME, with_level=True, with_parent=True))
+
+osm = parse_data(FILENAME)
+osm['node'][0]
+osm['way'][0]
+osm['relation'][0]
