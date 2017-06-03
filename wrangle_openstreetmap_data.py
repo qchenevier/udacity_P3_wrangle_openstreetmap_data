@@ -21,13 +21,18 @@ def get_tags(filename, **kwargs):
             tag_stack.pop()
         return tag_stack
 
-    def _append_tag(tags, element, event, level, tag_stack, with_level=False, with_parent=False):
+    def _append_tag(tags, element, event, level, tag_stack, with_level=False, with_parent=False,
+                    with_xpath=False):
         if event == 'start':
             tag_and_properties = [element.tag]
             if with_level:
                 tag_and_properties.append(level)
             if with_parent:
-                tag_and_properties.append(tag_stack[-1] if len(tag_stack) > 0 else None)
+                parent = tag_stack[-1] if len(tag_stack) > 0 else None
+                tag_and_properties.append(parent)
+            if with_xpath:
+                xpath = '/'.join(tag_stack + [element.tag])
+                tag_and_properties.append(xpath)
             tags.append(tuple(tag_and_properties))
         return tags
 
@@ -49,4 +54,5 @@ FILENAME = 'toulouse_extra_small.osm'
 Counter(get_tags(FILENAME))
 Counter(get_tags(FILENAME, with_level=True))
 Counter(get_tags(FILENAME, with_parent=True))
+Counter(get_tags(FILENAME, with_xpath=True))
 Counter(get_tags(FILENAME, with_level=True, with_parent=True))
