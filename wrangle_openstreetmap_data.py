@@ -60,7 +60,8 @@ def _convert_type(data):
             return float(data)
         except Exception as e:
             try:
-                return arrow.get(data).date()
+                format_string = '%Y-%m-%dT%H:%M:%S.%f%z'
+                datetime.strptime(my_timestamp, format_string)
             except Exception as e:
                 if re.findall('[Tt]rue', data):
                     return True
@@ -121,6 +122,20 @@ Counter(get_tags(FILENAME, with_level=True, with_parent=True))
 
 filter_list = ['node', 'way', 'relation']
 osm = parse_data(FILENAME, filter_list=filter_list)
-osm['node'][0]
-osm['way'][0]
-osm['relation'][1]
+
+from pprint import pprint
+import pymongo
+
+client = pymongo.MongoClient()
+client.database_names()
+
+db = client['osm']
+for category in filter_list:
+    db[category].insert(osm[category])
+
+pprint(list(db.node.aggregate([
+    {'$group': {
+        '_id': '$user',
+        'count': {'$sum': 1}
+    }},
+])))
