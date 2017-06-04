@@ -62,8 +62,8 @@ def _convert_type(data):
             return float(data)
         except Exception as e:
             try:
-                format_string = '%Y-%m-%dT%H:%M:%S.%f%z'
-                datetime.strptime(my_timestamp, format_string)
+                format_string = '%Y-%m-%dT%H:%M:%SZ'
+                return datetime.strptime(data, format_string)
             except Exception as e:
                 if re.findall('[Tt]rue', data):
                     return True
@@ -125,12 +125,9 @@ def parse_data(filename, filter_list=['node', 'way', 'relation'], recursive=True
     return data
 
 
-FILENAME = 'toulouse_extra_small.osm'
+# FILENAME = 'toulouse_extra_small.osm'
+FILENAME = 'toulouse_medium.osm'
 
-Counter(get_tags(FILENAME))
-Counter(get_tags(FILENAME, with_level=True))
-Counter(get_tags(FILENAME, with_parent=True))
-Counter(get_tags(FILENAME, with_xpath=True))
 Counter(get_tags(FILENAME, with_level=True, with_parent=True))
 
 filter_list = ['node', 'way', 'relation']
@@ -148,9 +145,69 @@ db = client['osm']
 for category in filter_list:
     db[category].insert(osm[category])
 
+
+'''
+Measures of data quality:
+- Validity: conforms to a schema
+- Accuracy: conforms to gold standard
+- Completeness: all records ?
+- Consistency: matches other data
+- Uniformity: Same units
+'''
+
 pprint(list(db.node.aggregate([
     {'$group': {
         '_id': '$user',
         'count': {'$sum': 1}
     }},
+    {'$sort': {'count': -1}},
 ])))
+
+
+pprint(list(db.node.aggregate([
+    {'$group': {
+        '_id': '$timestamp',
+        'count': {'$sum': 1}
+    }},
+])))
+
+
+def get_field_types(field_name, collection):
+    return list(collection.aggregate([
+        {'$project': {'fieldType': {'$type': '${}'.format(field_name)}}},
+        {'$group': {
+            '_id': '$fieldType',
+            'count': {'$sum': 1}
+        }},
+    ]))
+
+
+def get_most_used_fields(collection):
+    return Counter(
+        tuple(rec.keys()) for rec in collection
+        .find({})
+    ).most_common()[0][0]
+
+get_most_used_fields(db.node)
+get_most_used_fields(db.way)
+get_most_used_fields(db.relation)
+
+get_field_types('user', db.node)
+get_field_types('user', db.way)
+get_field_types('user', db.relation)
+
+for collection_name in filter_list:
+    collection = db[collection_name]
+    for field_name in get_most_used_fields(collection):
+        field_types = get_field_types(field_name, collection)
+        if len(field_types) > 1:
+            print(
+                '''
+collec: {}
+field :  {}
+types :  {}'''.format(
+                    collection_name,
+                    field_name,
+                    ' | '.join(['{}: {}'.format(f['_id'], f['count']) for f in field_types])
+                )
+            )
