@@ -109,8 +109,8 @@ def parse_data(filename, filter_list=['node', 'way', 'relation'], recursive=True
 
 logging.basicConfig(level=logging.DEBUG)
 # FILENAME = 'toulouse_extra_small.osm'
-# FILENAME = 'toulouse_medium.osm'
-FILENAME = 'toulouse_large.osm'
+FILENAME = 'toulouse_medium.osm'
+# FILENAME = 'toulouse_large.osm'
 
 collection_names = ['node', 'way', 'relation']
 osm = parse_data(FILENAME, filter_list=collection_names)
