@@ -12,33 +12,36 @@ def _get_cursor(file_handler, events=('start', 'end')):
     return ET.iterparse(file_handler, events=events)
 
 
+def _update_level(event, level):
+    level += 1 if event == 'start' else -1
+    return level
+
+
+def _update_tag_stack(tag_stack, element, event):
+    if event == 'start':
+        tag_stack.append(element.tag)
+    else:
+        tag_stack.pop()
+    return tag_stack
+
+
+def _append_tag(tags, element, event, level, tag_stack, with_level=False, with_parent=False,
+                with_xpath=False):
+    if event == 'start':
+        tag_and_properties = [element.tag]
+        if with_level:
+            tag_and_properties.append(level)
+        if with_parent:
+            parent = tag_stack[-1] if len(tag_stack) > 0 else None
+            tag_and_properties.append(parent)
+        if with_xpath:
+            xpath = '/'.join(tag_stack + [element.tag])
+            tag_and_properties.append(xpath)
+        tags.append(tuple(tag_and_properties))
+    return tags
+
+
 def get_tags(filename, **kwargs):
-    def _update_level(event, level):
-        level += 1 if event == 'start' else -1
-        return level
-
-    def _update_tag_stack(tag_stack, element, event):
-        if event == 'start':
-            tag_stack.append(element.tag)
-        else:
-            tag_stack.pop()
-        return tag_stack
-
-    def _append_tag(tags, element, event, level, tag_stack, with_level=False, with_parent=False,
-                    with_xpath=False):
-        if event == 'start':
-            tag_and_properties = [element.tag]
-            if with_level:
-                tag_and_properties.append(level)
-            if with_parent:
-                parent = tag_stack[-1] if len(tag_stack) > 0 else None
-                tag_and_properties.append(parent)
-            if with_xpath:
-                xpath = '/'.join(tag_stack + [element.tag])
-                tag_and_properties.append(xpath)
-            tags.append(tuple(tag_and_properties))
-        return tags
-
     with open(filename) as file_h:
         cursor = _get_cursor(file_h)
         level = -1
@@ -48,7 +51,6 @@ def get_tags(filename, **kwargs):
             level = _update_level(event, level)
             tags = _append_tag(tags, element, event, level, tag_stack, **kwargs)
             tag_stack = _update_tag_stack(tag_stack, element, event)
-
     return tags
 
 
@@ -77,38 +79,49 @@ def _convert_values_type(data_dict):
     return {key: _convert_type(value) for key, value in data_dict.items()}
 
 
-def parse_data(filename, filter_list=['node', 'way', 'relation']):
-    def _append_data(data, element):
-        record = _convert_values_type(element.attrib)
+def _manage_tag_and_record_exceptions(tag, record):
+    if tag == 'nd':
+        tag = 'node_ref'
+        record = record['ref']
+    if tag == 'tag':
+        tag = record['k']
+        record = record['v']
+    return tag, record
 
-        if element.tag == 'nd':
-            record = record['ref']
-            element.tag = 'node_ref'
 
-        if element.tag == 'tag':
-            element.tag = record['k']
-            record = record['v']
+def _get_tag_and_record(element):
+    tag = element.tag
+    record = _convert_values_type(element.attrib)
+    tag, record = _manage_tag_and_record_exceptions(tag, record)
+    return tag, record
 
+
+def _insert_record_in_data_dict(data, key, value):
+    if key in data.keys():
+        if not isinstance(data[key], list):
+            data[key] = [data[key]]
+        data[key].append(value)
+    else:
+        data[key] = value
+    return data
+
+
+def _add_record(data, element, recursive=True):
+    tag, record = _get_tag_and_record(element)
+    if recursive:
         for child in element.getchildren():
-            record = _append_data(record, child)
+            record = _add_record(record, child)
+    data = _insert_record_in_data_dict(data, tag, record)
+    return data
 
-        if element.tag in data.keys():
-            if not isinstance(data[element.tag], list):
-                data[element.tag] = [data[element.tag]]
-            data[element.tag].append(record)
-        else:
-            data[element.tag] = record
-            # data[element.tag] = [record]
 
-        return data
-
+def parse_data(filename, filter_list=['node', 'way', 'relation'], recursive=True):
     with open(filename) as file_h:
         cursor = _get_cursor(file_h, events=('start',))
         data = {}
         for event, element in cursor:
             if element.tag in filter_list:
-                data = _append_data(data, element)
-
+                data = _add_record(data, element, recursive=recursive)
     return data
 
 
@@ -128,6 +141,8 @@ import pymongo
 
 client = pymongo.MongoClient()
 client.database_names()
+
+client.drop_database('osm')
 
 db = client['osm']
 for category in filter_list:
