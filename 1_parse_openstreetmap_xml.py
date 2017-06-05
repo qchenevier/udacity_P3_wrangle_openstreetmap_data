@@ -3,9 +3,10 @@ import xml.etree.cElementTree as ET
 import pymongo
 import logging
 
-from builtins import *  # python 2 compatibility
 from collections import Counter
 from datetime import datetime
+
+from utils import *
 
 
 def _get_cursor(file_handler, events=('start', 'end')):
@@ -80,6 +81,9 @@ def parse_data(filename, filter_list=['node', 'way', 'relation'], recursive=True
             .format(cursor_line, num_lines, cursor_line / num_lines * 100)
         )
 
+    # this first part in only to count the number of lines to parse.
+    # the performance penalty is important but this information is useful to show progress
+    # when parsing very large files (more than 200 MB)
     with open(filename) as file_h:
         cursor = _get_cursor(file_h, events=('start',))
         logging.info('Counting lines to parse.')
@@ -87,11 +91,12 @@ def parse_data(filename, filter_list=['node', 'way', 'relation'], recursive=True
         for event, element in cursor:
             cursor_line += 1
             if cursor_line % 500000 == 0:
-                logging.info('{} lines read.'.format(cursor_line))
+                logging.debug('{} lines read.'.format(cursor_line))
             element.clear()
         num_lines = cursor_line
         logging.info('{} lines to parse.'.format(num_lines))
 
+    # here is the parsing part
     with open(filename) as file_h:
         cursor_line = 0
         cursor = _get_cursor(file_h, events=('start',))
@@ -117,8 +122,9 @@ osm = parse_data(FILENAME, filter_list=collection_names)
 
 client = pymongo.MongoClient()
 
+logging.info('Dropping former database')
 client.drop_database('osm')
 db = client['osm']
 for category in collection_names:
-    logging.info("inserting collection '{}' in mongoDB".format(category))
+    logging.info("Inserting collection '{}' in mongoDB".format(category))
     db[category].insert(osm[category])

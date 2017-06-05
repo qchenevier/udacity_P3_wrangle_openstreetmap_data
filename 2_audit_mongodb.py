@@ -1,8 +1,10 @@
 import pymongo
 
 from collections import Counter
-from pprint import pprint
+from pprint import pprint, pformat
 from datetime import datetime
+
+from utils import *
 
 
 def get_field_types(field_name, collection):
@@ -22,7 +24,7 @@ def get_most_used_fields(collection):
 
 
 def print_field_types(field_name, field_types):
-    print(
+    logging.debug(
         '{field} | {types}'.format(
             field=field_name,
             types=', '.join(['{}: {}'.format(f['_id'], f['count']) for f in field_types])
@@ -33,54 +35,20 @@ def print_field_types(field_name, field_types):
 client = pymongo.MongoClient()
 db = client['osm']
 
-pprint(list(db.node.aggregate([
+collection_names = ['node', 'way', 'relation']
+
+logging.info("Some statistics")
+unique_users = list(db.node.aggregate([
     {'$group': {
         '_id': '$user',
         'count': {'$sum': 1}
     }},
     {'$sort': {'count': -1}},
-    {'$limit': 50},
-])))
+]))
+logging.info("{} unique users in the 'node' collection".format(len(unique_users)))
+logging.info("The 10 most active users in the database are {}".format(unique_users[:10]))
 
-pprint(list(db.node.aggregate([
-    {'$group': {
-        '_id': '$timestamp',
-        'count': {'$sum': 1}
-    }},
-    {'$sort': {'count': -1}},
-    {'$limit': 50},
-])))
-
-collection_names = ['node', 'way', 'relation']
-for collection_name in collection_names:
-    collection = db[collection_name]
-    fields = get_most_used_fields(collection)
-    print()
-    print('{} || {}'.format(collection_name, ' | '.join(fields)))
-    for field_name in fields:
-        field_types = get_field_types(field_name, collection)
-        if len(field_types) > 1:
-            print_field_types(field_name, field_types)
-
-'''
-Measures of data quality:
-- Validity: conforms to a schema
-- Accuracy: conforms to gold standard
-- Completeness: all records ?
-- Consistency: matches other data
-- Uniformity: Same units
-'''
-
-
-'''
-Auditing Validity:
-- range, unicity (e.g.: date within range)
-- foreign key constraints (e.g.: 'node' keys in 'way' table must be in 'node' table)
-- cross-field constraints (e.g.: start date must be before end date)
-- datatype (e.g.: date must be a date, user must be a string)
-'''
-# Verify that dates are all in a reasonable range
-
+logging.info('Validity: Verify that dates are all in a possible range (2004-2018)')
 pipeline = [
     {'$match': {'timestamp': {
         '$lt': datetime(2004, 1, 1),
@@ -90,11 +58,10 @@ pipeline = [
 ]
 impossible_dates = []
 for collection_name in collection_names:
-    pprint(list(db[collection_name].aggregate(pipeline + [{'$limit': 50}])))
     impossible_dates += [record for record in db[collection_name].aggregate(pipeline)]
-print('{} impossible dates: {}'.format(len(impossible_dates), impossible_dates))
+logging.info('{} impossible dates: {}'.format(len(impossible_dates), impossible_dates))
 
-# Verify way.node_ref ids are all in node collection
+logging.info("Validity: Verify node_ref ids (in 'way' collection) are all in 'node' collection")
 pipeline = [
     {'$unwind': '$node_ref'},
     {'$group': {
@@ -103,7 +70,6 @@ pipeline = [
     }},
     {'$sort': {'count': -1}},
 ]
-pprint(list(db.way.aggregate(pipeline + [{'$limit': 50}])))
 node_list = [record['_id'] for record in db.way.aggregate(pipeline)]
 
 pipeline = [
@@ -111,51 +77,38 @@ pipeline = [
         '_id': '$id',
     }},
 ]
-pprint(list(db.node.aggregate(pipeline + [{'$limit': 50}])))
 reference_node_list = [record['_id'] for record in db.node.aggregate(pipeline)]
 
 orphan_nodes = list(set(node_list) - set(reference_node_list))
-print('{} orphan nodes: {}'.format(len(orphan_nodes), orphan_nodes))
+logging.info('{} orphan nodes: {}'.format(len(orphan_nodes), orphan_nodes))
+
+logging.debug('Accuracy: verify that data is the same as a reference dataset (on a subset)')
+logging.debug('No check performed here')
+
+logging.debug(
+    'Completeness: count number of missing data compared to the reference dataset (on a subset)')
+logging.debug('No check performed here')
 
 
-'''
-Auditing Accuracy:
-- verify that data is the same as a reference dataset (on a subset)
-'''
-# No check performed here
+logging.debug('Consistency: check which data are conflicting with one another')
+logging.debug('No check performed here')
 
-'''
-Auditing Completeness:
-- count number of missing data compared to the reference dataset (on a subset)
-'''
-# No check performed here
+logging.debug('Consistency: decide which dataset is more reliable')
+logging.debug('No check performed here')
 
+logging.info('Uniformity: verify types of records (e.g.: string instead of date) or units used')
+logging.debug('Most used fields per collection:')
+for collection_name in collection_names:
+    collection = db[collection_name]
+    fields = get_most_used_fields(collection)
+    logging.debug('{} || {}'.format(collection_name, ' | '.join(fields)))
+    for field_name in fields:
+        field_types = get_field_types(field_name, collection)
+        if len(field_types) > 1:
+            print_field_types(field_name, field_types)
 
-'''
-Auditing Consistency:
-- check which data are conflicting with one another
-- decide which dataset is more reliable
-'''
-# No check performed here
-
-
-'''
-Auditing Uniformity:
-- verify types of data for each field (e.g.: string instead of date, float instead of int)
-'''
-
-collection_name = 'node'
-collection = db[collection_name]
-fields = get_most_used_fields(collection)
-print()
-print('{} || {}'.format(collection_name, ' | '.join(fields)))
-for field_name in fields:
-    field_types = get_field_types(field_name, collection)
-    if len(field_types) > 1:
-        print_field_types(field_name, field_types)
-
-# check node ids which are int and long
-max_int32_theoretical_value = 2147483647
+logging.info(
+    "Uniformity: Audit field 'id' in 'node' collection: some are 'int' and others are 'long'")
 
 pipeline = [
     {'$addFields': {'id_type': {'$type': '$id'}}},
@@ -164,7 +117,6 @@ pipeline = [
     {'$sort': {'id': -1}},
     {'$limit': 1},
 ]
-pprint(list(db.node.aggregate(pipeline)))
 max_int_id = list(db.node.aggregate(pipeline))[0]['id']
 
 pipeline = [
@@ -174,7 +126,62 @@ pipeline = [
     {'$sort': {'id': 1}},
     {'$limit': 1},
 ]
-pprint(list(db.node.aggregate(pipeline)))
 min_long_id = list(db.node.aggregate(pipeline))[0]['id']
 
-print(max_int_id, max_int32_theoretical_value, min_long_id)
+max_int32_theoretical_value = 2147483647
+
+logging.info('max int id              : {}'.format(max_int_id))
+logging.info('max int 32-bits (theory): {}'.format(max_int32_theoretical_value))
+logging.info('min long id             : {}'.format(min_long_id))
+
+logging.info('''
+The analysis shows that mongoDB adapts the data type when inserting integers. the 'int' type is used
+for integers smaller than the 32-bits integer max size and the 'long' type is used for integers
+above this max size. When we read the mongoDB documentation, we understand that it's normal:
+- 'int' stands for 32-bit integer
+- 'long' stands for 64-bit integer
+(relevant documentation: https://docs.mongodb.com/manual/reference/operator/query/type/)
+''')
+
+logging.info('Nothing to be done here.')
+
+logging.info(
+    "Uniformity: Audit field 'ref:FR:FANTOIR': some of them are 'int', others are 'string', etc.")
+
+logging.debug("Examples of 'int'")
+pipeline = [
+    {'$addFields': {'field_type': {'$type': '$ref:FR:FANTOIR'}}},
+    {'$match': {'field_type': 'int'}},
+    {'$project': {'ref:FR:FANTOIR': 1}},
+    {'$limit': 5},
+]
+logging.debug(pformat(list(db.relation.aggregate(pipeline))))
+
+logging.debug("Examples of 'string'")
+pipeline = [
+    {'$addFields': {'field_type': {'$type': '$ref:FR:FANTOIR'}}},
+    {'$match': {'field_type': 'string'}},
+    {'$project': {'ref:FR:FANTOIR': 1}},
+    {'$limit': 5},
+]
+logging.debug(pformat(list(db.relation.aggregate(pipeline))))
+
+logging.debug('Record for ref:FR:FANTOIR = 116:')
+pipeline = [
+    {'$match': {'ref:FR:FANTOIR': 116}},
+]
+logging.debug(pformat(list(db.relation.aggregate(pipeline))))
+
+logging.info('''
+We understand that the data seems to have been correctly parsed by looking at the orginal data
+(the ref:FR:FANTOIR is correct). Also the data seems to be compliant with the data specification
+(which says that it is possible to use a short code of four alphanumeric caracters, which may begin
+with zeroes, instead of a long code ending with a letter). However we understand that the conversion
+in integer of the code has stripped the zeroes, which renders the audit less easy. It is better to
+change the parser to avoid conversion in int for this specific field.
+
+Relevant data specification (which is in french, sorry...): http://wiki.openstreetmap.org/wiki/FR:Key:ref:FR:FANTOIR
+Original data of this record available here: https://www.openstreetmap.org/api/0.6/relation/1732473
+''')
+
+logging.info('Nothing to do here (except a small improvement in the parser)')
