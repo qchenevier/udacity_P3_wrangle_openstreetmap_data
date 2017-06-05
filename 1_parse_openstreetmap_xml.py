@@ -75,40 +75,40 @@ def _add_record(data, element, recursive=True):
 
 
 def parse_data(filename, filter_list=['node', 'way', 'relation'], recursive=True):
-    def _report_parsing_progress(cursor_line, num_lines):
+    def _report_parsing_progress(cursor_tag, num_tags):
         logging.info(
-            'Parsed {} / {} lines. ({:.1f} %)'
-            .format(cursor_line, num_lines, cursor_line / num_lines * 100)
+            'Parsed {} / {} tags. ({:.1f} %)'
+            .format(cursor_tag, num_tags, cursor_tag / num_tags * 100)
         )
 
-    # this first part in only to count the number of lines to parse.
+    # this first part in only to count the number of tags to parse.
     # the performance penalty is important but this information is useful to show progress
     # when parsing very large files (more than 200 MB)
     with open(filename) as file_h:
         cursor = _get_cursor(file_h, events=('start',))
-        logging.info('Counting lines to parse.')
-        cursor_line = 0
+        logging.info('Counting tags to parse.')
+        cursor_tag = 0
         for event, element in cursor:
-            cursor_line += 1
-            if cursor_line % 500000 == 0:
-                logging.debug('{} lines read.'.format(cursor_line))
+            cursor_tag += 1
+            if cursor_tag % 500000 == 0:
+                logging.debug('{} tags read.'.format(cursor_tag))
             element.clear()
-        num_lines = cursor_line
-        logging.info('{} lines to parse.'.format(num_lines))
+        num_tags = cursor_tag
+        logging.info('{} tags to parse.'.format(num_tags))
 
     # here is the parsing part
     with open(filename) as file_h:
-        cursor_line = 0
+        cursor_tag = 0
         cursor = _get_cursor(file_h, events=('start',))
         data = {}
         for event, element in cursor:
-            cursor_line += 1
+            cursor_tag += 1
             if element.tag in filter_list:
                 data = _add_record(data, element, recursive=recursive)
-            if cursor_line % 100000 == 0:
-                _report_parsing_progress(cursor_line, num_lines)
+            if cursor_tag % 100000 == 0:
+                _report_parsing_progress(cursor_tag, num_tags)
             element.clear()
-    _report_parsing_progress(cursor_line, num_lines)
+    _report_parsing_progress(cursor_tag, num_tags)
     return data
 
 

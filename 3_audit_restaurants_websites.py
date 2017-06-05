@@ -103,7 +103,11 @@ bad_records = check_urls(records)
 
 logging.info('Deletion of remaining bad urls in database')
 bad_ids = [record['_id'] for record in bad_records]
-db.node.remove({'_id': {'$in': bad_ids}})
+db.node.update(
+    {'_id': {'$in': bad_ids}},
+    {'$unset': {'website': ''}},
+    multi=True,
+)
 
 # re-check urls
 records = get_restaurant_records(db.node)
