@@ -14,6 +14,9 @@ def _get_cursor(file_handler, events=('start', 'end')):
 
 
 def _convert_type(data):
+    if ';' in data:
+        data_list = data.split(';')
+        return [_convert_type(item) for item in data_list]
     try:
         return int(data)
     except Exception as e:
