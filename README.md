@@ -257,20 +257,20 @@ This solution of dropping URLs in database upon HTTP status code could be improv
 - every 2 or 3 months, run a job to drop the bad `website` URLs, based on a threshold on the number of failed checks during a given time period (i.e. using the `website_failed_checks` array).
 
 Pros:
-- less false-positive detection and wrong deletion.
+- Less false-positive detection and wrong deletion.
 
 Cons:
-- confirmation time period delays the deletion of the bad records in the database, slightly detrimental to its accuracy. These records will appear as false-negatives (website is really down, but the URL is still in the database).
-- additional work to chose the threshold and the time period, which maybe need to be adapted to local OSM communities, depending on their habits.
+- Confirmation time period delays the deletion of the bad records in the database, slightly detrimental to its accuracy. These records will appear as false-negatives (website is really down, but the URL is still in the database).
+- Additional work to chose the threshold and the time period, which maybe need to be adapted to local OSM communities, depending on their habits.
 
 
 ### Improvement 2: better HMI to input data
-To diminish the number of human errors, I think that the tools of OpenStreetMap would really help users by displaying some examples about how to fill in the fields they are about to fill (e.g.: next to the form field). It would help people reminding themselves that the database is international and ruled by convention decided by the community.
+To diminish the number of human errors, I think that the tools of OpenStreetMap would really help users by displaying some examples about how to fill in the fields they are about to fill (e.g.: next to the form field). It would help people reminding themselves that the database is international and ruled by conventions decided by the community.
 
 Pros:
-- less bad input due to human error 
+- Less bad input due to human error 
 
 Cons:
 - HMI potentially hard to design: it might render the tools less user-friendly
-- additional work to maintain a set of examples for each human-made field
-- synchronize of the HMI with the examples database might render the OSM tools harder to maintain
+- Additional work to maintain a set of examples for each human-made field
+- Synchronization of the HMI with the examples database might render the OSM tools harder to maintain
