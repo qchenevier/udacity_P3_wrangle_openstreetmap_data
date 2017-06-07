@@ -1,126 +1,251 @@
-# Auditing data from openstreetmap
+# OpenStreetMap Data Case Study
 
-## Prerequisites
-Please install:
-- python 3 with the following modules:
-  - pymongo
-  - colorlog (optional)
-- mongoDB
+## Map Area
 
-## Usage
-The audit is done in 3 steps, with a python script for each step:
+Toulouse, France
 
-1. Parse XML file downloaded from [openstreetmap site](https://www.openstreetmap.org/export)
-1. Audit validity & uniformity
-1. Audit accuracy
+- Here is a [Toulouse overview](https://www.openstreetmap.org/relation/35738)
+- The part I extracted is around [this point in Toulouse](https://www.openstreetmap.org/export#map=15/43.6019/1.4340)
+- Click on [this link](http://overpass-api.de/api/map?bbox=1.4015,43.5874,1.4661,43.6163) to download the same XML file.
 
-All scripts output explanations & useful information in the console about the operations they perform.
-
-> Installation of the `colorlog` module is recommended for easier reading of the console output.
-
-### Parse XML
-The XML file which is parsed is `toulouse_medium.osm` (~ 60 MB). It is centered around [this point in Toulouse, France](https://www.openstreetmap.org/export#map=15/43.6019/1.4340). Click on [this link](http://overpass-api.de/api/map?bbox=1.4015,43.5874,1.4661,43.6163) to download the same XML file.
+This city is where I live. To discover a new database, I think it's easier to start with something I know in real life.
 
 
-Execute the script in console:
+To parse the XML file and insert it in the mongoDB database, use the script `python 1_parse_openstreetmap_xml.py`
 
-`python 1_parse_openstreetmap_xml.py`
 
-This script will:
-- parse the xml file and retrieve records of 3 types: `node`, `way` and `relation`
-- delete the former database in mongoDB
-- insert a database named `osm` in mongoDB with 3 collections: `node`, `way` and `relation`
+## Problems Encountered in the Map
 
-The file is 993077 lines long for 918435 tags.
+I parsed the XML file `toulouse_medium.osm` with the script `python 1_parse_openstreetmap_xml.py`. After several queries, I noticed several small problems in the dataset:
+- impossible postcodes: _68199_ whereas all postcodes in the region follow the pattern _31xxx_
+- opening hours specified in french: _du lundi au vendredi le midi_
+- website fields badly formed and referring to outdated sites
 
-> A running instance of mongoDB is needed (on linux, run `sudo service mongod start`)
+We perform several operations in each case. To do it, run the script `python 3_audit_and_correct_data.py`
 
-### Audit validity & uniformity
-We decided to audit some of the most used fields in the database.
+### Impossible postcodes: _68199_ whereas all postcodes in the region follow the pattern _31xxx_
+To check all the postcodes after parsing, I used the following query:
 
-Execute the script in console:
+``` python
+pipeline = [
+    {'$unwind': '$addr:postcode'},
+    {'$match': {'addr:postcode': {
+        '$exists': 1,
+    }}},
+    {'$project': {'addr:postcode': 1}},
+]
+addr_postcode = set(rec['addr:postcode'] for rec in db.node.aggregate(pipeline))
+print(addr_postcode)
+```
 
-`python 2_audit_mongodb.py`
+Which gave me this result:
+`{31200, 31300, 31076, 68199, 31400, 31015, 31500, 31000, 31100}`
 
-This script will audit validity and uniformity for various fields:
-- compute some statistics about each collection
-- audit validity of `date` in all collections
-- audit validity of `node_ref` in `way` collection
-- audit uniformity of `id` in `node` collection
-- audit uniformity of `ref:FR:FANTOIR` in `relation` collection
+The postcode **68199** is not compatible with the region. Our region has all postcodes beginning with **31**. In bash, I used a grep command to check that such record was existing in the XML file:
 
-> The database is not modified by this script. For the fields we audited, the uniformity & validity of the data we parsed from the _openstreetmap_ database seems quite good.
+``` bash
+grep -A 1 -B 1 -E '"68199"' toulouse_medium.osm
+```
 
-> However all the uniformity and validity checks have proven to be **very useful while debugging** the parser: thanks to that, I have been able to find very quickly what went wrong during the first phase.
+Which gave me:
+``` XML
+<tag k="addr:housenumber" v="14"/>
+<tag k="addr:postcode" v="68199"/>
+<tag k="addr:street" v="Boulevard de Bonrepos"/>
+```
 
-#### Statistics:
+I deduce that the parser behaved correctly, the error is in the XML data. It is maybe a typing error by the user. However, it's difficult to deduce the correct data from this corrupt record. So I decide to drop it.
+
+``` python
+bad_postcode = [postcode for postcode in addr_postcode if int(str(postcode)[0:2]) != 31]
+db.node.update(
+    {'addr:postcode': {'$in': bad_postcode}},
+    {'$unset': {'addr:postcode': ''}},
+    multi=True,
+)
+```
+
+### Opening hours specified in french: _du lundi au vendredi le midi_
+Here is the query I used to check the opening hours:
+``` python
+pipeline = [
+    {'$unwind': '$opening_hours'},
+    {'$match': {'opening_hours': {
+        '$exists': 1,
+    }}},
+    {'$project': {'opening_hours': 1}},
+]
+opening_hours = list(rec['opening_hours'] for rec in db.node.aggregate(pipeline))
+```
+
+By looking at the content of `opening_hours`, I quickly found that some fields had been filled with the french convention to note hours: **12h30** instead of **12:30** or in plain french text **du lundi au vendredi midi**.
+
+After several tests and by [reading the OpenStreetMap specification](http://wiki.openstreetmap.org/wiki/Key:opening_hours) for this key, I have designed a small test to detect automatically most of the badly formatted opening hours:  
+
+``` python
+opening_hours_accepted_words = [
+    'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su',
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    '\ ', '24/7', ':', '\d{1,2}', ';', '-', ',', 'off', 'PH', '\+',
+]
+pattern = '^({})*$'.format('|'.join(opening_hours_accepted_words))
+bad_opening_hours = [s for s in opening_hours if not re.search(pattern, s)]
+pprint(bad_opening_hours)
+```
+
+Which shows me the following invalid opening hours:
+``` python
+['Tu-Sat 09:00-12:30,14:00-19:00',
+ 'du lundi au vendredi le midi',
+ 'mo-sa 07:00-02:00',
+ ' Sa midday off',
+ "de 17h30 à 2h / jusqu'à 3h le samedi",
+        ...
+ ' Dec 25\xa0off',
+ '10h-13h30, 15h30-19h00. Fermé dimanche et lundi',
+ '19h30 à 22h00 en semaine, 19h30 23h00 en week-end',
+ '7h30-13h  16h-20h']
+ ```
+
+After a quick thinking, I think it is too complicated to correct it programmatically: too much special cases. Either we drop it or we correct it by hand. The exercise is not about correcting data by hand, so I choose to drop it.
+
+``` python
+db.node.update(
+    {'opening_hours': {'$in': bad_opening_hours}},
+    {'$unset': {'opening_hours': ''}},
+    multi=True,
+)
+```
+
+### Website fields wrongly formatted and refering to outdated sites
+This field has been (deliberately) chosen because it is hard to maintain: physical change of restaurants may be reflected quite quickly in the database by the community, but change in their website might not be easy to detect.
+
+I use the following query to get all the restaurants websites info (in this case I get the (`_id`, `website`) fields for each record):
+
+``` python
+pipeline = [
+    {'$match': {'website': {'$exists': 1}}},
+    {'$project': {'website': 1}},
+]
+website_records = list(collection.aggregate(pipeline))
+```
+I get 741 websites.
+
+#### Check the sites
+To check the accuracy of the websites URL's, I simply do an HTTP request and decide if the URL is still accurate depending on the status code I get:
+
+``` python
+def check_urls(website_records):
+    logging.info('Accuracy: Checking if {} websites are valid'.format(len(website_records)))
+    count = 0
+    bad_website_records = []
+    for record in website_records:
+        website = record['website']
+        try:
+            request = requests.head(website, timeout=5)
+            code = request.status_code
+            if code not in [200, 301, 302]:
+                logging.debug('{:03d} | bad code: {}: {}'.format(count, code, website))
+                bad_website_records.append(record)
+            else:
+                pass
+        except Exception as e:
+            logging.debug('{:03d} | request failed: {}: {}'.format(count, website, e))
+            bad_website_records.append(record)
+        count += 1
+    logging.info('{} bad websites'.format(len(bad_website_records)))
+    return bad_website_records
+```
+
+When I run this code `bad_records = check_urls(records)` and analyze its output, I understand that:
+- some website URLs are badly formatted (e.g without `http://`)
+- some website URLs are well formatted but the site is down
+
+There are up to 112 websites which are incorrect, as per the check I performed.
+
+> Warning: this figure may vary, if you rerun the test. To do a more robust test, it would be better to confirm that a site is unavailable for several days straight.
+
+#### Correct malformed URLs
+I try to correct the malformed URLs by adding a proper `http://` at the beginning:
+``` python
+# get records and ids
+pipeline = [
+    {'$match': {'website': {'$exists': 1}}},
+    {'$match': {'website': {'$not': re.compile('^http[s]{0,1}://')}}},
+    {'$project': {'website': 1}},
+]
+bad_url_records = list(db.node.aggregate(pipeline))
+
+# update records in db
+for record in bad_url_records:
+    db.node.update_one(
+        {'_id': record['_id']},
+        {'$set': {'website': 'http://' + record['website']}},
+    )
+```
+36 URLs have been corrected in the collection.
+
+#### Re-check URLs and delete websites which are still bad after correction
+After correcting this, I re-run: `bad_records = check_urls(records)` and I still get 82 bad websites. I decide to drop the records and re-run the check.
+
+``` python
+bad_ids = [record['_id'] for record in bad_records]
+db.node.update(
+    {'_id': {'$in': bad_ids}},
+    {'$unset': {'website': ''}},
+    multi=True,
+)
+```
+
+### Statistics:
+
+Those statistics are given by running the script `python 2_statistics.py`
+
+#### Unique users & number of records
+I used the following queries to get the unique users per collection and for the whole database:
+``` python
+all_unique_users = set()
+for collection_name in ['node', 'way', 'relation']:
+    unique_users = list(db[collection_name].aggregate([
+        {'$group': {
+            '_id': '$user',
+            'count': {'$sum': 1}
+        }},
+        {'$sort': {'count': -1}},
+    ]))
+    print(collection_name, unique_users)
+    all_unique_users = all_unique_users | set(user['_id'] for user in unique_users)
+    print('all', unique_users)
+```
+
+And I used the following queries to get the number of records per collection and for the whole database:
+``` python
+n_records = 0
+for collection_name in ['node', 'way', 'relation']:
+    n_records += db[collection_name].count()
+    print(collection_name, db[collection_name].count())
+print('all', n_records)
+```
+
+The results are compiled in the following table:
+
 ||'node'|'way'|'relation'|all|
 |--|--|--|--|--|
 |unique users|472|324|121|583|
-|number of records|243233|42001|1873|287107|
+|number of records|243251|42001|1873|287125|
 
-> mongoDB queries for theses statistics are available in the `2_audit_mongodb.py` script file.
+#### File sizes
+- `toulouse_medium.osm`: 64MB (as per `ls -alh` in linux shell)
+- mongoDB: 47 MB (as per `db.stats(1024*1024)` in mongo shell)
 
-#### Validity of `date` in all collections
+## Conclusion
 
-We look for "impossible dates": i.e. we verify that `date` records are all in the range: from 2004-01-01 to 2018-01-01.
+The audit has shown that the database is quite robust on most fields (such as `date`, `id`, `user`). It seems that these fields are generated automatically by the OSM tools so it's not so surprising.
 
-The audit didn't find any "impossible dates".
+But, for fields which are filled by humans, the error rate goes up. It's worth taking the time to audit the data. However, for the cases we found it was not easy to solve programmatically the errors in the data, especially for 2 cases:
+- either the input was too corrupted to deduce what was the correct data (e.g.: see the postcode section)
+- or there is too much specific cases that it's quicker to correct the data by hand (e.g.: see the opening hours section). This case seems particularly true for the fields where it's tempting to put natural language (we don't have this problem with the postcode field).
 
-#### Validity of `node_ref` in `way` collection
+However I'm happy for founding a way to correct automatically some data (e.g: the websites URLs).
 
-We look for "orphan nodes": i.e. we verify that all `node_ref` ids in `way` collection are all in the `node` collection.
-
-The audit didn't find any "orphan nodes".
-
-#### Uniformity of `id` in `node` collection
-
-We analyze why some `id` are _int_ type and others are _long_ type.
-
-The analysis shows that mongoDB adapts the data type when inserting integers. the _int_ type is used for integers smaller than the 32-bits integer max size and the _long_ type is used for integers above this max size. When we read the mongoDB documentation, we understand that it's normal:
-- _int_ stands for 32-bit integer
-- _long_ stands for 64-bit integer
-
-Relevant documentation:
-- [mongoDB types]( https://docs.mongodb.com/manual/reference/operator/query/type/)
-
-#### Uniformity of `ref:FR:FANTOIR` in `relation` collection
-
-We analyze why some `ref:FR:FANTOIR` are _int_ type and others are _string_ type.
-
-We understand that the data seems to have been correctly parsed by looking at the original data (the ref:FR:FANTOIR is correct). Also the data seems to be compliant with the data specification (which says that it is possible to use a short code of four alphanumeric characters, which may begin with zeros, instead of a long code ending with a letter).
-However we understand that the conversion in integer of the code has stripped the zeros, which renders the audit less easy. It would be better to improve the parser to avoid conversion in _int_ for this specific field.
-
-Relevant documentation:
-- [OpenStreetMap data specification about `ref:FR:FANTOIR`]( http://wiki.openstreetmap.org/wiki/FR:Key:ref:FR:FANTOIR). It's in french, sorry :-(
-- [Original data of a _bizarre_, yet normal record]( https://www.openstreetmap.org/api/0.6/relation/1732473)
-
-
-### Audit accuracy
-We have (deliberately) chosen to audit a field which is hard to maintain: the `website` for each restaurant. Physical change of restaurants may be reflected quite quickly in the database by the community, but change in their website might not be easy to detect. Additionally, since this field is not widely used, errors might go unnoticed.
-
-Execute the script in console:
-
-`python 3_audit_restaurants_websites.py`
-
-This script will:
-- audit accuracy for the `website` field for each restaurant (i.e. each `node` record with `amenity` = `restaurant`) by doing an HTTP request to each website and check the HTTP status code we get.
-- correct `website` which may be malformed (e.g without `http://`) in the database
-- re-audit accuracy
-- delete `website` which are still incorrect after correction
-
-
-There are 453 restaurants in the database, with 116 `website`:
-- 26 seem to be inaccurate at first glance (22 %)
-- 11 have been corrected (9 %)
-- 18 were still inaccurate after this correction and have been deleted (16 %)
-
-In the end, after trying to correct the fields, we deleted 16 % of the `website` fields due inaccuracy. After that, we had no more inaccuracies (as per our metrics).
-
-> The number of detected inaccuracies might be different when you run the script. I had different results within a time frame of several hours. In a real life situation, to decide to data, we would need a more robust criteria, such as the unavailability of the site for several days.
-
-## Synthesis
-
-This exercise of parsing and cleaning data is quite tedious and it is not finished yet ! The audit has shown that the database is quite robust on its most used fields (such as `date`, `id`, `user`). It seems that these fields are generated automatically by the OSM tools so it's not so surprising. With more time, I think I would continue to audit the least used fields, such as `ref:FR:FANTOIR`, because they seem to be human-made. A good start would be the address fields: `addr:street`, `addr:city`, `addr:postcode`, `addr:country`, `addr:housenumber` and so on.
-
-About data correction, I think that a good practice would be to keep the data and only label it as _inaccurate_. E.g. label site as _down_ and recheck automatically every several weeks if it's still true. Deleting permanently data on a single failed test seems pretty dangerous.
+To diminish the number of human errors, I think that the tools of OpenStreetMap would really help users by displaying some example about how to fill in the fields they are about to fill. It would help people reminding themselves that the database is international and ruled by convention decided by the community.
